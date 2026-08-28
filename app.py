@@ -7,6 +7,15 @@ import pandas as pd
 
 # ---------------- 1. دوال المعالجة ---------------- #
 
+# دالة ذكية لضبط لون الخط (أبيض أو أسود) بناءً على لون الخلفية عشان يكون مقروء
+def get_text_color(hex_color):
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        # لو اللون فاتح نكتب بأسود، لو غامق نكتب بأبيض
+        return "#000000" if (r * 0.299 + g * 0.587 + b * 0.114) > 128 else "#FFFFFF"
+    return "#000000"
+
 @st.cache_data(show_spinner=False)
 def fetch_and_process_pdf(pdf_url):
     response = requests.get(pdf_url)
@@ -34,7 +43,6 @@ def fetch_and_process_pdf(pdf_url):
         for text in pages_text:
             lines = text.split('\n')
             for line in lines:
-                # التعديل الأهم: البحث عن الوقت في أي مكان في السطر مش بس في الأول
                 time_match = re.search(r'(\d{1,2}:\d{2})', line)
                 if time_match:
                     pdf_time = time_match.group(1)
@@ -57,7 +65,6 @@ def fetch_and_process_pdf(pdf_url):
                         scoreboard_time = pdf_time
                         current_half = "Unknown"
 
-                    # التعرف على الأحداث حتى لو الحروف كابيتال أو سمول
                     event_lower = event_text.lower()
                     event_type = "Other"
                     if "shot by" in event_lower: event_type = "Shot"
@@ -112,10 +119,28 @@ if st.button("🚀 حلل البيانات"):
     else:
         st.warning("رجاءً أدخل رابط الـ PDF أولاً.")
 
+# ---------------- 3. عرض البيانات والفلاتر والألوان ---------------- #
+
 if 'match_data' in st.session_state:
     df = st.session_state['match_data']
     
     st.divider()
+    
+    # --- استخراج أسماء الفرق ---
+    teams = [t for t in df['Team'].unique() if t.strip()]
+    team1 = teams[0] if len(teams) > 0 else "Team 1"
+    team2 = teams[1] if len(teams) > 1 else "Team 2"
+    
+    # --- إعدادات الألوان ---
+    st.subheader("🎨 تخصيص ألوان الفرق")
+    col1, col2 = st.columns(2)
+    with col1:
+        color1 = st.color_picker(f"لون فريق {team1} (Home الديفولت)", "#FFFFFF")
+    with col2:
+        color2 = st.color_picker(f"لون فريق {team2} (Away الديفولت)", "#000000")
+    
+    st.divider()
+    
     st.subheader("📊 تفاصيل المباراة")
     
     filter_type = st.multiselect("فلترة حسب نوع الحدث:", 
@@ -124,8 +149,18 @@ if 'match_data' in st.session_state:
     
     filtered_df = df[df["Type"].isin(filter_type)]
     
-    # رسالة بتوضحلك هو لاقى كام حدث
     st.info(f"📌 تم العثور على {len(filtered_df)} حدث بناءً على الفلتر اللي اخترته.")
     
-    # عرض الجدول بطريقة أقوى مش بتختفي
-    st.write(filtered_df)
+    # --- دالة تلوين الصفوف ---
+    def color_rows(row):
+        if row['Team'] == team1:
+            return [f'background-color: {color1}; color: {get_text_color(color1)}'] * len(row)
+        elif row['Team'] == team2:
+            return [f'background-color: {color2}; color: {get_text_color(color2)}'] * len(row)
+        return [''] * len(row)
+    
+    # تطبيق الألوان على الجدول
+    styled_df = filtered_df.style.apply(color_rows, axis=1)
+    
+    # عرض الجدول الملون
+    st.dataframe(styled_df, use_container_width=True)
