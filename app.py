@@ -154,27 +154,27 @@ def fetch_and_process_pdf(pdf_url):
 
 st.set_page_config(page_title="محلل إحصائيات المباريات", page_icon="⚽", layout="wide")
 # --- زرار وضع النهار والليل ---
- dark_mode = st.toggle("🌙 تفعيل وضع الليل (HUDL Theme)", value=True)
+dark_mode = st.toggle("🌙 تفعيل وضع الليل (HUDL Theme)", value=True)
 
-    if dark_mode:
-        theme_css = """
-        <style>
-            [data-testid="stAppViewContainer"] { background-color: #191A1E; color: #FFFFFF; }
-            [data-testid="stHeader"] { background-color: #191A1E; }
-            p, h1, h2, h3 { color: #FFFFFF !important; }
-            .stButton>button { background-color: #FF5100; color: white; border: none; }
-        </style>
-        """
-    else:
-        theme_css = """
-        <style>
-            [data-testid="stAppViewContainer"] { background-color: #FFFFFF; color: #000000; }
-            [data-testid="stHeader"] { background-color: #FFFFFF; }
-            p, h1, h2, h3 { color: #000000 !important; }
-        </style>
-        """
-    st.markdown(theme_css, unsafe_allow_html=True)
-    # ------------------------------
+if dark_mode:
+    theme_css = """
+    <style>
+        [data-testid="stAppViewContainer"] { background-color: #191A1E; color: #FFFFFF; }
+        [data-testid="stHeader"] { background-color: #191A1E; }
+        p, h1, h2, h3 { color: #FFFFFF !important; }
+        .stButton>button { background-color: #FF5100; color: white; border: none; }
+    </style>
+    """
+else:
+    theme_css = """
+    <style>
+        [data-testid="stAppViewContainer"] { background-color: #FFFFFF; color: #000000; }
+        [data-testid="stHeader"] { background-color: #FFFFFF; }
+        p, h1, h2, h3 { color: #000000 !important; }
+    </style>
+    """
+st.markdown(theme_css, unsafe_allow_html=True)
+# ------------------------------
 st.title("⚽ محلل تقارير المباريات (NCAA Play-by-Play)")
 st.markdown("حط لينك الـ PDF هنا علشان نطلعلك الداتا بالوقت المضبوط، واسم الفرقة، وأرقام اللعيبة.")
 
