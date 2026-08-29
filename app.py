@@ -7,12 +7,10 @@ import pandas as pd
 
 # ---------------- 1. دوال المعالجة ---------------- #
 
-# دالة ذكية لضبط لون الخط (أبيض أو أسود) بناءً على لون الخلفية عشان يكون مقروء
 def get_text_color(hex_color):
     hex_color = hex_color.lstrip('#')
     if len(hex_color) == 6:
         r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
-        # لو اللون فاتح نكتب بأسود، لو غامق نكتب بأبيض
         return "#000000" if (r * 0.299 + g * 0.587 + b * 0.114) > 128 else "#FFFFFF"
     return "#000000"
 
@@ -26,6 +24,8 @@ def fetch_and_process_pdf(pdf_url):
         temp_pdf_path = temp_pdf.name
 
     events = []
+    display_roster = [] 
+    unique_players = set()
     
     with pdfplumber.open(temp_pdf_path) as pdf:
         pages_text = []
@@ -33,12 +33,20 @@ def fetch_and_process_pdf(pdf_url):
             text = page.extract_text()
             if text: pages_text.append(text)
                 
-        roster = {}
+        roster_search_terms = {}
         for text in pages_text[:3]: 
-            matches = re.findall(r'\b(\d{1,2})\s+([A-Za-z\-\']+,\s*[A-Za-z\-\']+)', text)
+            # التعديل 1: السماح بالأسماء المركبة والمسافات قبل وبعد الفاصلة
+            matches = re.findall(r'\b(\d{1,2})\s+([A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*,\s*[A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*)', text)
             for num, name in matches:
+                roster_search_terms[name] = num
+                # إضافة نسخة احتياطية من الاسم في حال اختلاف المسافات
+                if ", " in name:
+                    roster_search_terms[name.replace(", ", ",")] = num
+                    
                 clean_name = name.replace(" ", "").lower()
-                roster[clean_name] = num
+                if clean_name not in unique_players:
+                    unique_players.add(clean_name)
+                    display_roster.append({"رقم اللاعب": num, "اسم اللاعب": name})
                     
         for text in pages_text:
             lines = text.split('\n')
@@ -74,15 +82,14 @@ def fetch_and_process_pdf(pdf_url):
 
                     details = event_text
                     players_involved = []
-                    names_in_event = re.findall(r'([A-Za-z\-\']+,\s*[A-Za-z\-\']+)', event_text)
                     
-                    for name in names_in_event:
-                        clean_name = name.replace(" ", "").lower()
-                        number = roster.get(clean_name, "??") 
-                        
-                        formatted_name = f"{name} (#{number})"
-                        details = details.replace(name, formatted_name)
-                        players_involved.append(formatted_name)
+                    # التعديل 2: البحث بذكاء باستخدام الأسماء المستخرجة (الأطول أولاً)
+                    for name, num in sorted(roster_search_terms.items(), key=lambda x: len(x[0]), reverse=True):
+                        if name in details:
+                            formatted_name = f"{name} (#{num})"
+                            if formatted_name not in details:
+                                details = details.replace(name, formatted_name)
+                                players_involved.append(formatted_name)
 
                     events.append({
                         "Team": str(team),
@@ -93,7 +100,8 @@ def fetch_and_process_pdf(pdf_url):
                         "Players Involved": str(" | ".join(players_involved)),
                         "Details": str(details)
                     })
-    return events
+                    
+    return events, display_roster
 
 # ---------------- 2. واجهة الموقع ---------------- #
 
@@ -108,9 +116,13 @@ if st.button("🚀 حلل البيانات"):
     if pdf_url:
         with st.spinner('جاري التحليل...'):
             try:
-                parsed_data = fetch_and_process_pdf(pdf_url)
+                parsed_data, roster_data = fetch_and_process_pdf(pdf_url)
                 if parsed_data:
                     st.session_state['match_data'] = pd.DataFrame(parsed_data)
+                    
+                    roster_df = pd.DataFrame(roster_data).sort_values(by="اسم اللاعب")
+                    st.session_state['roster_data'] = roster_df
+                    
                     st.success("✅ تم التحليل بنجاح!")
                 else:
                     st.warning("⚠️ مقدرناش نلاقي أحداث في الملف ده، تأكد إن الملف فيه Play-by-Play.")
@@ -123,15 +135,19 @@ if st.button("🚀 حلل البيانات"):
 
 if 'match_data' in st.session_state:
     df = st.session_state['match_data']
+    roster_df = st.session_state['roster_data']
     
     st.divider()
     
-    # --- استخراج أسماء الفرق ---
+    with st.expander("📋 عرض قائمة أرقام وأسماء اللاعبين (Roster)"):
+        st.dataframe(roster_df, use_container_width=True, hide_index=True)
+        
+    st.divider()
+    
     teams = [t for t in df['Team'].unique() if t.strip()]
     team1 = teams[0] if len(teams) > 0 else "Team 1"
     team2 = teams[1] if len(teams) > 1 else "Team 2"
     
-    # --- إعدادات الألوان ---
     st.subheader("🎨 تخصيص ألوان الفرق")
     col1, col2 = st.columns(2)
     with col1:
@@ -151,7 +167,6 @@ if 'match_data' in st.session_state:
     
     st.info(f"📌 تم العثور على {len(filtered_df)} حدث بناءً على الفلتر اللي اخترته.")
     
-    # --- دالة تلوين الصفوف ---
     def color_rows(row):
         if row['Team'] == team1:
             return [f'background-color: {color1}; color: {get_text_color(color1)}'] * len(row)
@@ -159,8 +174,5 @@ if 'match_data' in st.session_state:
             return [f'background-color: {color2}; color: {get_text_color(color2)}'] * len(row)
         return [''] * len(row)
     
-    # تطبيق الألوان على الجدول
     styled_df = filtered_df.style.apply(color_rows, axis=1)
-    
-    # عرض الجدول الملون
     st.dataframe(styled_df, use_container_width=True)
