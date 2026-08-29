@@ -24,30 +24,64 @@ def fetch_and_process_pdf(pdf_url):
         temp_pdf_path = temp_pdf.name
 
     events = []
-    display_roster = [] 
-    unique_players = set()
+    display_roster = []
+    roster_search_terms = {}
+    team_names = {"left": "فريق 1", "right": "فريق 2"}
+    
+    # قاموس لربط اسم اللاعب بفرقته (يمين أو شمال)
+    player_to_team = {}
+    # قاموس لربط الاختصار (زي SHU) بالاسم الكامل للفرقة
+    abbr_to_full = {}
     
     with pdfplumber.open(temp_pdf_path) as pdf:
+        page1 = pdf.pages[0]
+        width = page1.width
+        height = page1.height
+        
+        left_crop = page1.crop((0, 0, width/2, height))
+        right_crop = page1.crop((width/2, 0, width, height))
+        
+        left_text = left_crop.extract_text() or ""
+        right_text = right_crop.extract_text() or ""
+        
+        def extract_team_name(text):
+            lines = [l.strip() for l in text.split('\n') if l.strip()]
+            if lines:
+                return re.sub(r'\s+\d+$', '', lines[0]) 
+            return "Unknown"
+            
+        team_names["left"] = extract_team_name(left_text)
+        team_names["right"] = extract_team_name(right_text)
+        
+        regex_pattern = r'\b(\d{1,2})\s+([A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*,\s*[A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*)'
+        unique_players = set()
+        
+        # قراءة فريق الشمال (الضيف - Away)
+        for num, name in re.findall(regex_pattern, left_text):
+            clean_name = name.replace(" ", "").lower()
+            if clean_name not in unique_players:
+                unique_players.add(clean_name)
+                display_roster.append({"رقم اللاعب": num, "اسم اللاعب": name, "الفرقة": team_names["left"]})
+                roster_search_terms[name] = num
+                player_to_team[clean_name] = team_names["left"]
+                if ", " in name: roster_search_terms[name.replace(", ", ",")] = num
+                
+        # قراءة فريق اليمين (صاحب الأرض - Home)
+        unique_players.clear() # تفريغ لتجنب تداخل الأسماء المتشابهة
+        for num, name in re.findall(regex_pattern, right_text):
+            clean_name = name.replace(" ", "").lower()
+            if clean_name not in unique_players:
+                unique_players.add(clean_name)
+                display_roster.append({"رقم اللاعب": num, "اسم اللاعب": name, "الفرقة": team_names["right"]})
+                roster_search_terms[name] = num
+                player_to_team[clean_name] = team_names["right"]
+                if ", " in name: roster_search_terms[name.replace(", ", ",")] = num
+
         pages_text = []
         for page in pdf.pages:
             text = page.extract_text()
             if text: pages_text.append(text)
-                
-        roster_search_terms = {}
-        for text in pages_text[:3]: 
-            # التعديل 1: السماح بالأسماء المركبة والمسافات قبل وبعد الفاصلة
-            matches = re.findall(r'\b(\d{1,2})\s+([A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*,\s*[A-Za-z\-\'\.]+(?:\s+[A-Za-z\-\'\.]+)*)', text)
-            for num, name in matches:
-                roster_search_terms[name] = num
-                # إضافة نسخة احتياطية من الاسم في حال اختلاف المسافات
-                if ", " in name:
-                    roster_search_terms[name.replace(", ", ",")] = num
-                    
-                clean_name = name.replace(" ", "").lower()
-                if clean_name not in unique_players:
-                    unique_players.add(clean_name)
-                    display_roster.append({"رقم اللاعب": num, "اسم اللاعب": name})
-                    
+            
         for text in pages_text:
             lines = text.split('\n')
             for line in lines:
@@ -57,16 +91,14 @@ def fetch_and_process_pdf(pdf_url):
                     event_text = line.replace(pdf_time, '').strip()
                     
                     team_match = re.search(r'\b([A-Z]{2,5})\b', event_text)
-                    team = team_match.group(1) if team_match else ""
+                    team_abbr = team_match.group(1) if team_match else ""
                     
                     try:
                         minutes, seconds = map(int, pdf_time.split(':'))
                         current_half = "1" if minutes < 45 else "2"
-                        
                         total_half_seconds = 45 * 60 if current_half == "1" else 90 * 60
                         elapsed = (minutes * 60) + seconds
                         rem_seconds = total_half_seconds - elapsed
-                        
                         if rem_seconds < 0: rem_seconds = 0
                         scoreboard_time = f"{rem_seconds // 60:02d}:{rem_seconds % 60:02d}"
                     except:
@@ -83,16 +115,21 @@ def fetch_and_process_pdf(pdf_url):
                     details = event_text
                     players_involved = []
                     
-                    # التعديل 2: البحث بذكاء باستخدام الأسماء المستخرجة (الأطول أولاً)
                     for name, num in sorted(roster_search_terms.items(), key=lambda x: len(x[0]), reverse=True):
                         if name in details:
+                            # ذكاء الربط: بنعرف الاختصار ده بتاع أي فريق عن طريق اللاعب!
+                            if team_abbr and team_abbr not in abbr_to_full:
+                                clean_name = name.replace(" ", "").lower()
+                                if clean_name in player_to_team:
+                                    abbr_to_full[team_abbr] = player_to_team[clean_name]
+                                    
                             formatted_name = f"{name} (#{num})"
                             if formatted_name not in details:
                                 details = details.replace(name, formatted_name)
                                 players_involved.append(formatted_name)
 
                     events.append({
-                        "Team": str(team),
+                        "Team": str(team_abbr),
                         "Scoreboard Time": str(scoreboard_time),
                         "PDF Time": str(pdf_time),
                         "Half": str(current_half),
@@ -101,7 +138,7 @@ def fetch_and_process_pdf(pdf_url):
                         "Details": str(details)
                     })
                     
-    return events, display_roster
+    return events, display_roster, team_names, abbr_to_full
 
 # ---------------- 2. واجهة الموقع ---------------- #
 
@@ -114,14 +151,15 @@ pdf_url = st.text_input("🔗 أدخل رابط ملف الـ PDF هنا:")
 
 if st.button("🚀 حلل البيانات"):
     if pdf_url:
-        with st.spinner('جاري التحليل...'):
+        with st.spinner('جاري التحليل واستخراج الجداول...'):
             try:
-                parsed_data, roster_data = fetch_and_process_pdf(pdf_url)
+                parsed_data, roster_data, team_names, abbr_to_full = fetch_and_process_pdf(pdf_url)
                 if parsed_data:
                     st.session_state['match_data'] = pd.DataFrame(parsed_data)
-                    
-                    roster_df = pd.DataFrame(roster_data).sort_values(by="اسم اللاعب")
+                    roster_df = pd.DataFrame(roster_data).sort_values(by="رقم اللاعب", key=lambda col: pd.to_numeric(col, errors='coerce'))
                     st.session_state['roster_data'] = roster_df
+                    st.session_state['team_names'] = team_names
+                    st.session_state['abbr_to_full'] = abbr_to_full
                     
                     st.success("✅ تم التحليل بنجاح!")
                 else:
@@ -136,24 +174,45 @@ if st.button("🚀 حلل البيانات"):
 if 'match_data' in st.session_state:
     df = st.session_state['match_data']
     roster_df = st.session_state['roster_data']
+    team_names = st.session_state['team_names']
+    abbr_to_full = st.session_state.get('abbr_to_full', {})
     
     st.divider()
     
-    with st.expander("📋 عرض قائمة أرقام وأسماء اللاعبين (Roster)"):
-        st.dataframe(roster_df, use_container_width=True, hide_index=True)
+    team_left = team_names['left']  # Away
+    team_right = team_names['right'] # Home
+    
+    with st.expander("📋 عرض قوائم اللعيبة (الروستر)", expanded=True):
+        col1, col2 = st.columns(2)
         
+        with col1:
+            st.markdown(f"### ✈️ {team_left} (الضيف - Away)")
+            team1_roster = roster_df[roster_df["الفرقة"] == team_left][["رقم اللاعب", "اسم اللاعب"]]
+            st.dataframe(team1_roster, use_container_width=True, hide_index=True)
+            
+        with col2:
+            st.markdown(f"### 🏠 {team_right} (صاحب الأرض - Home)")
+            team2_roster = roster_df[roster_df["الفرقة"] == team_right][["رقم اللاعب", "اسم اللاعب"]]
+            st.dataframe(team2_roster, use_container_width=True, hide_index=True)
+
     st.divider()
     
-    teams = [t for t in df['Team'].unique() if t.strip()]
-    team1 = teams[0] if len(teams) > 0 else "Team 1"
-    team2 = teams[1] if len(teams) > 1 else "Team 2"
+    # تحديد الاختصار الخاص بكل فريق بدقة
+    away_abbr = next((abbr for abbr, full in abbr_to_full.items() if full == team_left), "Away")
+    home_abbr = next((abbr for abbr, full in abbr_to_full.items() if full == team_right), "Home")
+    
+    # أمان إضافي لو الاختصارات متلقيتش
+    if away_abbr == "Away" or home_abbr == "Home":
+        teams_abbr = [t for t in df['Team'].unique() if t.strip()]
+        if len(teams_abbr) > 0 and away_abbr == "Away": away_abbr = teams_abbr[0]
+        if len(teams_abbr) > 1 and home_abbr == "Home": home_abbr = teams_abbr[1]
     
     st.subheader("🎨 تخصيص ألوان الفرق")
     col1, col2 = st.columns(2)
     with col1:
-        color1 = st.color_picker(f"لون فريق {team1} (Home الديفولت)", "#FFFFFF")
+        color_away = st.color_picker(f"لون الضيف - {team_left} ({away_abbr})", "#FFFFFF")
     with col2:
-        color2 = st.color_picker(f"لون فريق {team2} (Away الديفولت)", "#000000")
+        color_home = st.color_picker(f"لون صاحب الأرض - {team_right} ({home_abbr})", "#000000")
     
     st.divider()
     
@@ -168,10 +227,10 @@ if 'match_data' in st.session_state:
     st.info(f"📌 تم العثور على {len(filtered_df)} حدث بناءً على الفلتر اللي اخترته.")
     
     def color_rows(row):
-        if row['Team'] == team1:
-            return [f'background-color: {color1}; color: {get_text_color(color1)}'] * len(row)
-        elif row['Team'] == team2:
-            return [f'background-color: {color2}; color: {get_text_color(color2)}'] * len(row)
+        if row['Team'] == away_abbr:
+            return [f'background-color: {color_away}; color: {get_text_color(color_away)}'] * len(row)
+        elif row['Team'] == home_abbr:
+            return [f'background-color: {color_home}; color: {get_text_color(color_home)}'] * len(row)
         return [''] * len(row)
     
     styled_df = filtered_df.style.apply(color_rows, axis=1)
