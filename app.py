@@ -154,7 +154,7 @@ def fetch_and_process_pdf(pdf_url):
 
 st.set_page_config(page_title="محلل إحصائيات المباريات", page_icon="⚽", layout="wide")
 # --- زرار وضع النهار والليل ---
-    dark_mode = st.toggle("🌙 تفعيل وضع الليل (HUDL Theme)", value=True)
+ dark_mode = st.toggle("🌙 تفعيل وضع الليل (HUDL Theme)", value=True)
 
     if dark_mode:
         theme_css = """
